@@ -483,9 +483,9 @@ int xmkstemp(char *template) FAST_FUNC;
 off_t fdlength(int fd) FAST_FUNC;
 
 uoff_t FAST_FUNC get_volume_size_in_bytes(int fd,
-                const char *override,
-                unsigned override_units,
-                int extend);
+		const char *override,
+		unsigned override_units,
+		int extend);
 
 void xpipe(int filedes[2]) FAST_FUNC;
 /* In this form code with pipes is much more readable */
@@ -523,7 +523,8 @@ struct BUG_too_small {
 
 void parse_datestr(const char *date_str, struct tm *ptm) FAST_FUNC;
 time_t validate_tm_time(const char *date_str, struct tm *ptm) FAST_FUNC;
-
+char *strftime_HHMMSS(char *buf, unsigned len, time_t *tp) FAST_FUNC;
+char *strftime_YYYYMMDDHHMMSS(char *buf, unsigned len, time_t *tp) FAST_FUNC;
 
 int xsocket(int domain, int type, int protocol) FAST_FUNC;
 void xbind(int sockfd, struct sockaddr *my_addr, socklen_t addrlen) FAST_FUNC;
@@ -677,6 +678,13 @@ const char* FAST_FUNC printable_string(uni_stat_t *stats, const char *str);
  * else it is printed as-is (except for ch = 0x9b) */
 enum { PRINTABLE_META = 0x100 };
 void fputc_printable(int ch, FILE *file) FAST_FUNC;
+/* Return a string that is the printable representation of character ch.
+ * Buffer must hold at least four characters. */
+enum {
+	VISIBLE_ENDLINE   = 1 << 0,
+	VISIBLE_SHOW_TABS = 1 << 1,
+};
+void visible(unsigned ch, char *buf, int flags) FAST_FUNC;
 
 /* dmalloc will redefine these to it's own implementation. It is safe
  * to have the prototypes here unconditionally.  */
@@ -831,6 +839,9 @@ struct suffix_mult {
 	char suffix[4];
 	unsigned mult;
 };
+extern const struct suffix_mult bkm_suffixes[];
+#define km_suffixes (bkm_suffixes + 1)
+
 #include "xatonum.h"
 /* Specialized: */
 
@@ -1108,9 +1119,6 @@ void bb_displayroutes(int noresolve, int netstatfmt) FAST_FUNC;
 
 
 /* Networking */
-int create_icmp_socket(void) FAST_FUNC;
-int create_icmp6_socket(void) FAST_FUNC;
-/* interface.c */
 /* This structure defines protocol families and their handlers. */
 struct aftype {
 	const char *name;
@@ -1139,6 +1147,7 @@ struct hwtype {
 };
 extern smallint interface_opt_a;
 int display_interfaces(char *ifname) FAST_FUNC;
+int in_ether(const char *bufp, struct sockaddr *sap) FAST_FUNC;
 #if ENABLE_FEATURE_HWIB
 int in_ib(const char *bufp, struct sockaddr *sap) FAST_FUNC;
 #else
@@ -1435,7 +1444,7 @@ void read_key_ungets(char *buffer, const char *str, unsigned len) FAST_FUNC;
 /* It's NOT just ENABLEd or disabled. It's a number: */
 # if defined CONFIG_FEATURE_EDITING_HISTORY && CONFIG_FEATURE_EDITING_HISTORY > 0
 #  define MAX_HISTORY (CONFIG_FEATURE_EDITING_HISTORY + 0)
-unsigned size_from_HISTFILESIZE(const char *hp);
+unsigned size_from_HISTFILESIZE(const char *hp) FAST_FUNC;
 # else
 #  define MAX_HISTORY 0
 # endif
@@ -1477,6 +1486,7 @@ line_input_t *new_line_input_t(int flags) FAST_FUNC;
  * >0 length of input string, including terminating '\n'
  */
 int read_line_input(line_input_t *st, const char *prompt, char *command, int maxsize, int timeout) FAST_FUNC;
+void show_history(const line_input_t *st) FAST_FUNC;
 # if ENABLE_FEATURE_EDITING_SAVE_ON_EXIT
 void save_history(line_input_t *st);
 # endif
@@ -1801,7 +1811,7 @@ extern const char bb_default_login_shell[] ALIGN1;
 # define VC_4 "/dev/vc/4"
 # define VC_5 "/dev/vc/5"
 # define VC_FORMAT "/dev/vc/%d"
-# define LOOP_FORMAT "/dev/loop/%d"
+# define LOOP_FORMAT "/dev/loop/%u"
 # define LOOP_NAMESIZE (sizeof("/dev/loop/") + sizeof(int)*3 + 1)
 # define LOOP_NAME "/dev/loop/"
 # define FB_0 "/dev/fb/0"
@@ -1814,7 +1824,7 @@ extern const char bb_default_login_shell[] ALIGN1;
 # define VC_4 "/dev/tty4"
 # define VC_5 "/dev/tty5"
 # define VC_FORMAT "/dev/tty%d"
-# define LOOP_FORMAT "/dev/loop%d"
+# define LOOP_FORMAT "/dev/loop%u"
 # define LOOP_NAMESIZE (sizeof("/dev/loop") + sizeof(int)*3 + 1)
 # define LOOP_NAME "/dev/loop"
 # define FB_0 "/dev/fb0"

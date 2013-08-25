@@ -478,6 +478,7 @@ static void flash(int);		// flash the terminal screen
 static void show_status_line(void);	// put a message on the bottom line
 static void status_line(const char *, ...);     // print to status buf
 static void status_line_bold(const char *, ...);
+static void status_line_bold_errno(const char *fn);
 static void not_implemented(const char *); // display "Not implemented" message
 static int format_edit_status(void);	// format file status on status line
 static void redraw(int);	// force a full screen refresh
@@ -1321,7 +1322,7 @@ static void colon(char *buf)
 		}
 		if (l < 0) {
 			if (l == -1)
-				status_line_bold("'%s' %s", fn, strerror(errno));
+				status_line_bold_errno(fn);
 		} else {
 			status_line("'%s' %dL, %dC", fn, li, l);
 			if (q == text && r == end - 1 && l == ch) {
@@ -1706,65 +1707,53 @@ static char *new_screen(int ro, int co)
 // search for pattern starting at p
 static char *char_search(char *p, const char *pat, int dir, int range)
 {
-	char *q;
 	struct re_pattern_buffer preg;
+	const char *err;
+	char *q;
 	int i;
 	int size;
 
 	re_syntax_options = RE_SYNTAX_POSIX_EXTENDED;
-	preg.translate = 0;
-	preg.fastmap = 0;
-	preg.buffer = 0;
-	preg.allocated = 0;
+	if (ignorecase)
+		re_syntax_options = RE_SYNTAX_POSIX_EXTENDED | RE_ICASE;
+
+	memset(&preg, 0, sizeof(preg));
+	err = re_compile_pattern(pat, strlen(pat), &preg);
+	if (err != NULL) {
+		status_line_bold("bad search pattern '%s': %s", pat, err);
+		return p;
+	}
 
 	// assume a LIMITED forward search
-	q = next_line(p);
-	q = end_line(q);
 	q = end - 1;
-	if (dir == BACK) {
-		q = prev_line(p);
+	if (dir == BACK)
 		q = text;
-	}
-	// count the number of chars to search over, forward or backward
-	size = q - p;
-	if (size < 0)
-		size = p - q;
 	// RANGE could be negative if we are searching backwards
 	range = q - p;
-
-	q = (char *)re_compile_pattern(pat, strlen(pat), (struct re_pattern_buffer *)&preg);
-	if (q != 0) {
-		// The pattern was not compiled
-		status_line_bold("bad search pattern: '%s': %s", pat, q);
-		i = 0;			// return p if pattern not compiled
-		goto cs1;
-	}
-
 	q = p;
+	size = range;
 	if (range < 0) {
+		size = -size;
 		q = p - size;
 		if (q < text)
 			q = text;
 	}
 	// search for the compiled pattern, preg, in p[]
-	// range < 0-  search backward
-	// range > 0-  search forward
+	// range < 0: search backward
+	// range > 0: search forward
 	// 0 < start < size
-	// re_search() < 0  not found or error
-	// re_search() > 0  index of found pattern
-	//            struct pattern    char     int    int    int     struct reg
-	// re_search (*pattern_buffer,  *string, size,  start, range,  *regs)
-	i = re_search(&preg, q, size, 0, range, 0);
-	if (i == -1) {
-		p = 0;
-		i = 0;			// return NULL if pattern not found
-	}
- cs1:
-	if (dir == FORWARD) {
+	// re_search() < 0: not found or error
+	// re_search() >= 0: index of found pattern
+	//           struct pattern   char     int   int    int    struct reg
+	// re_search(*pattern_buffer, *string, size, start, range, *regs)
+	i = re_search(&preg, q, size, /*start:*/ 0, range, /*struct re_registers*:*/ NULL);
+	regfree(&preg);
+	if (i < 0)
+		return NULL;
+	if (dir == FORWARD)
 		p = p + i;
-	} else {
+	else
 		p = p - i;
-	}
 	return p;
 }
 
@@ -1789,7 +1778,7 @@ static char *char_search(char *p, const char *pat, int dir, int range)
 
 	len = strlen(pat);
 	if (dir == FORWARD) {
-		stop = end - 1;	// assume range is p - end-1
+		stop = end - 1;	// assume range is p..end-1
 		if (range == LIMITED)
 			stop = next_line(p);	// range is to next line
 		for (start = p; start < stop; start++) {
@@ -1798,7 +1787,7 @@ static char *char_search(char *p, const char *pat, int dir, int range)
 			}
 		}
 	} else if (dir == BACK) {
-		stop = text;	// assume range is text - p
+		stop = text;	// assume range is text..p
 		if (range == LIMITED)
 			stop = prev_line(p);	// range is to prev line
 		for (start = p - len; start >= stop; start--) {
@@ -2503,7 +2492,7 @@ static int file_insert(const char *fn, char *p, int update_ro_status)
 
 	/* Validate file */
 	if (stat(fn, &statbuf) < 0) {
-		status_line_bold("'%s' %s", fn, strerror(errno));
+		status_line_bold_errno(fn);
 		goto fi0;
 	}
 	if (!S_ISREG(statbuf.st_mode)) {
@@ -2519,18 +2508,18 @@ static int file_insert(const char *fn, char *p, int update_ro_status)
 	// read file to buffer
 	fd = open(fn, O_RDONLY);
 	if (fd < 0) {
-		status_line_bold("'%s' %s", fn, strerror(errno));
+		status_line_bold_errno(fn);
 		goto fi0;
 	}
 	size = (statbuf.st_size < INT_MAX ? (int)statbuf.st_size : INT_MAX);
 	p += text_hole_make(p, size);
 	cnt = safe_read(fd, p, size);
 	if (cnt < 0) {
-		status_line_bold("'%s' %s", fn, strerror(errno));
+		status_line_bold_errno(fn);
 		p = text_hole_delete(p, p + size - 1);	// un-do buffer insert
 	} else if (cnt < size) {
 		// There was a partial read, shrink unused space text[]
-		p = text_hole_delete(p + cnt, p + (size - cnt) - 1);	// un-do buffer insert
+		p = text_hole_delete(p + cnt, p + size - 1);	// un-do buffer insert
 		status_line_bold("can't read '%s'", fn);
 	}
 	if (cnt >= size)
@@ -2715,6 +2704,11 @@ static void status_line_bold(const char *format, ...)
 	va_end(args);
 
 	have_status_msg = 1 + sizeof(ESC_BOLD_TEXT) + sizeof(ESC_NORM_TEXT) - 2;
+}
+
+static void status_line_bold_errno(const char *fn)
+{
+	status_line_bold("'%s' %s", fn, strerror(errno));
 }
 
 // format status buffer
