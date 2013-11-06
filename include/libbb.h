@@ -32,12 +32,12 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <string.h>
-/* There are two incompatible basename's, let not use them! */
+/* There are two incompatible basename's, let's not use them! */
 /* See the dirname/basename man page for details */
 #include <libgen.h> /* dirname,basename */
 #undef basename
 #define basename dont_use_basename
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -1772,6 +1772,11 @@ extern struct globals *const ptr_to_globals;
 #define SET_PTR_TO_GLOBALS(x) do { \
 	(*(struct globals**)&ptr_to_globals) = (void*)(x); \
 	barrier(); \
+} while (0)
+#define FREE_PTR_TO_GLOBALS() do { \
+	if (ENABLE_FEATURE_CLEAN_UP) { \
+		free(ptr_to_globals); \
+	} \
 } while (0)
 
 /* You can change LIBBB_DEFAULT_LOGIN_SHELL, but don't use it,
