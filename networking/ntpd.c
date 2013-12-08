@@ -57,10 +57,10 @@
 
 
 /* Verbosity control (max level of -dddd options accepted).
- * max 5 is very talkative (and bloated). 2 is non-bloated,
+ * max 6 is very talkative (and bloated). 3 is non-bloated,
  * production level setting.
  */
-#define MAX_VERBOSE     2
+#define MAX_VERBOSE     3
 
 
 /* High-level description of the algorithm:
@@ -334,7 +334,7 @@ struct globals {
 
 #define STATE_NSET      0       /* initial state, "nothing is set" */
 //#define STATE_FSET    1       /* frequency set from file */
-#define STATE_SPIK      2       /* spike detected */
+//#define STATE_SPIK    2       /* spike detected */
 //#define STATE_FREQ    3       /* initial frequency */
 #define STATE_SYNC      4       /* clock synchronized (normal operation) */
 	uint8_t  discipline_state;      // doc calls it c.state
@@ -367,6 +367,7 @@ static const int const_IPTOS_LOWDELAY = IPTOS_LOWDELAY;
 #define VERB3 if (MAX_VERBOSE >= 3 && G.verbose >= 3)
 #define VERB4 if (MAX_VERBOSE >= 4 && G.verbose >= 4)
 #define VERB5 if (MAX_VERBOSE >= 5 && G.verbose >= 5)
+#define VERB6 if (MAX_VERBOSE >= 6 && G.verbose >= 6)
 
 
 static double LOG2D(int a)
@@ -568,7 +569,7 @@ filter_datapoints(peer_t *p)
 	got_newest = 0;
 	sum = 0;
 	for (i = 0; i < NUM_DATAPOINTS; i++) {
-		VERB4 {
+		VERB5 {
 			bb_error_msg("datapoint[%d]: off:%f disp:%f(%f) age:%f%s",
 				i,
 				fdp[idx].d_offset,
@@ -665,7 +666,7 @@ filter_datapoints(peer_t *p)
 	sum = SQRT(sum / NUM_DATAPOINTS);
 	p->filter_jitter = sum > G_precision_sec ? sum : G_precision_sec;
 
-	VERB3 bb_error_msg("filter offset:%+f disp:%f jitter:%f",
+	VERB4 bb_error_msg("filter offset:%+f disp:%f jitter:%f",
 			p->filter_offset,
 			p->filter_dispersion,
 			p->filter_jitter);
@@ -676,6 +677,18 @@ reset_peer_stats(peer_t *p, double offset)
 {
 	int i;
 	bool small_ofs = fabs(offset) < 16 * STEP_THRESHOLD;
+
+	/* Used to set p->filter_datapoint[i].d_dispersion = MAXDISP
+	 * and clear reachable bits, but this proved to be too agressive:
+	 * after step (tested with suspinding laptop for ~30 secs),
+	 * this caused all previous data to be considered invalid,
+	 * making us needing to collect full ~8 datapoins per peer
+	 * after step in order to start trusting them.
+	 * In turn, this was making poll interval decrease even after
+	 * step was done. (Poll interval decreases already before step
+	 * in this scenario, because we see large offsets and end up with
+	 * no good peer to select).
+	 */
 
 	for (i = 0; i < NUM_DATAPOINTS; i++) {
 		if (small_ofs) {
@@ -690,17 +703,17 @@ reset_peer_stats(peer_t *p, double offset)
 		} else {
 			p->filter_datapoint[i].d_recv_time  = G.cur_time;
 			p->filter_datapoint[i].d_offset     = 0;
-			p->filter_datapoint[i].d_dispersion = MAXDISP;
+			/*p->filter_datapoint[i].d_dispersion = MAXDISP;*/
 		}
 	}
 	if (small_ofs) {
 		p->lastpkt_recv_time += offset;
 	} else {
-		p->reachable_bits = 0;
+		/*p->reachable_bits = 0;*/
 		p->lastpkt_recv_time = G.cur_time;
 	}
 	filter_datapoints(p); /* recalc p->filter_xxx */
-	VERB5 bb_error_msg("%s->lastpkt_recv_time=%f", p->p_dotted, p->lastpkt_recv_time);
+	VERB6 bb_error_msg("%s->lastpkt_recv_time=%f", p->p_dotted, p->lastpkt_recv_time);
 }
 
 static void
@@ -972,20 +985,20 @@ fit(peer_t *p, double rd)
 {
 	if ((p->reachable_bits & (p->reachable_bits-1)) == 0) {
 		/* One or zero bits in reachable_bits */
-		VERB3 bb_error_msg("peer %s unfit for selection: unreachable", p->p_dotted);
+		VERB4 bb_error_msg("peer %s unfit for selection: unreachable", p->p_dotted);
 		return 0;
 	}
 #if 0 /* we filter out such packets earlier */
 	if ((p->lastpkt_status & LI_ALARM) == LI_ALARM
 	 || p->lastpkt_stratum >= MAXSTRAT
 	) {
-		VERB3 bb_error_msg("peer %s unfit for selection: bad status/stratum", p->p_dotted);
+		VERB4 bb_error_msg("peer %s unfit for selection: bad status/stratum", p->p_dotted);
 		return 0;
 	}
 #endif
 	/* rd is root_distance(p) */
 	if (rd > MAXDIST + FREQ_TOLERANCE * (1 << G.poll_exp)) {
-		VERB3 bb_error_msg("peer %s unfit for selection: root distance too high", p->p_dotted);
+		VERB4 bb_error_msg("peer %s unfit for selection: root distance too high", p->p_dotted);
 		return 0;
 	}
 //TODO
@@ -1025,7 +1038,7 @@ select_and_cluster(void)
 			continue;
 		}
 
-		VERB4 bb_error_msg("interval: [%f %f %f] %s",
+		VERB5 bb_error_msg("interval: [%f %f %f] %s",
 				offset - rd,
 				offset,
 				offset + rd,
@@ -1050,7 +1063,7 @@ select_and_cluster(void)
 	}
 	num_candidates = num_points / 3;
 	if (num_candidates == 0) {
-		VERB3 bb_error_msg("no valid datapoints, no peer selected");
+		VERB3 bb_error_msg("no valid datapoints%s", ", no peer selected");
 		return NULL;
 	}
 //TODO: sorting does not seem to be done in reference code
@@ -1108,12 +1121,13 @@ select_and_cluster(void)
 			break;
 		num_falsetickers++;
 		if (num_falsetickers * 2 >= num_candidates) {
-			VERB3 bb_error_msg("too many falsetickers:%d (candidates:%d), no peer selected",
-					num_falsetickers, num_candidates);
+			VERB3 bb_error_msg("falsetickers:%d, candidates:%d%s",
+					num_falsetickers, num_candidates,
+					", no peer selected");
 			return NULL;
 		}
 	}
-	VERB3 bb_error_msg("selected interval: [%f, %f]; candidates:%d falsetickers:%d",
+	VERB4 bb_error_msg("selected interval: [%f, %f]; candidates:%d falsetickers:%d",
 			low, high, num_candidates, num_falsetickers);
 
 	/* Clustering */
@@ -1131,7 +1145,7 @@ select_and_cluster(void)
 		survivor[num_survivors].p = p;
 		/* x.opt_rd == root_distance(p); */
 		survivor[num_survivors].metric = MAXDIST * p->lastpkt_stratum + point[i].opt_rd;
-		VERB4 bb_error_msg("survivor[%d] metric:%f peer:%s",
+		VERB5 bb_error_msg("survivor[%d] metric:%f peer:%s",
 			num_survivors, survivor[num_survivors].metric, p->p_dotted);
 		num_survivors++;
 	}
@@ -1141,8 +1155,9 @@ select_and_cluster(void)
 	 * is acceptable.
 	 */
 	if (num_survivors < MIN_SELECTED) {
-		VERB3 bb_error_msg("num_survivors %d < %d, no peer selected",
-				num_survivors, MIN_SELECTED);
+		VERB3 bb_error_msg("survivors:%d%s",
+				num_survivors,
+				", no peer selected");
 		return NULL;
 	}
 
@@ -1162,7 +1177,7 @@ select_and_cluster(void)
 		double min_jitter = min_jitter;
 
 		if (num_survivors <= MIN_CLUSTERED) {
-			VERB3 bb_error_msg("num_survivors %d <= %d, not discarding more",
+			VERB4 bb_error_msg("num_survivors %d <= %d, not discarding more",
 					num_survivors, MIN_CLUSTERED);
 			break;
 		}
@@ -1188,11 +1203,11 @@ select_and_cluster(void)
 				max_selection_jitter = selection_jitter_sq;
 				max_idx = i;
 			}
-			VERB5 bb_error_msg("survivor %d selection_jitter^2:%f",
+			VERB6 bb_error_msg("survivor %d selection_jitter^2:%f",
 					i, selection_jitter_sq);
 		}
 		max_selection_jitter = SQRT(max_selection_jitter / num_survivors);
-		VERB4 bb_error_msg("max_selection_jitter (at %d):%f min_jitter:%f",
+		VERB5 bb_error_msg("max_selection_jitter (at %d):%f min_jitter:%f",
 				max_idx, max_selection_jitter, min_jitter);
 
 		/* If the maximum selection jitter is less than the
@@ -1201,7 +1216,7 @@ select_and_cluster(void)
 		 * as well stop.
 		 */
 		if (max_selection_jitter < min_jitter) {
-			VERB3 bb_error_msg("max_selection_jitter:%f < min_jitter:%f, num_survivors:%d, not discarding more",
+			VERB4 bb_error_msg("max_selection_jitter:%f < min_jitter:%f, num_survivors:%d, not discarding more",
 					max_selection_jitter, min_jitter, num_survivors);
 			break;
 		}
@@ -1209,7 +1224,7 @@ select_and_cluster(void)
 		/* Delete survivor[max_idx] from the list
 		 * and go around again.
 		 */
-		VERB5 bb_error_msg("dropping survivor %d", max_idx);
+		VERB6 bb_error_msg("dropping survivor %d", max_idx);
 		num_survivors--;
 		while (max_idx < num_survivors) {
 			survivor[max_idx] = survivor[max_idx + 1];
@@ -1251,7 +1266,7 @@ select_and_cluster(void)
 		/* Starting from 1 is ok here */
 		for (i = 1; i < num_survivors; i++) {
 			if (G.last_update_peer == survivor[i].p) {
-				VERB4 bb_error_msg("keeping old synced peer");
+				VERB5 bb_error_msg("keeping old synced peer");
 				p = G.last_update_peer;
 				goto keep_old;
 			}
@@ -1259,7 +1274,7 @@ select_and_cluster(void)
 	}
 	G.last_update_peer = p;
  keep_old:
-	VERB3 bb_error_msg("selected peer %s filter_offset:%+f age:%f",
+	VERB4 bb_error_msg("selected peer %s filter_offset:%+f age:%f",
 			p->p_dotted,
 			p->filter_offset,
 			G.cur_time - p->lastpkt_recv_time
@@ -1278,7 +1293,7 @@ set_new_values(int disc_state, double offset, double recv_time)
 	 * of the last clock filter sample, which must be earlier than
 	 * the current time.
 	 */
-	VERB3 bb_error_msg("disc_state=%d last update offset=%f recv_time=%f",
+	VERB4 bb_error_msg("disc_state=%d last update offset=%f recv_time=%f",
 			disc_state, offset, recv_time);
 	G.discipline_state = disc_state;
 	G.last_update_offset = offset;
@@ -1316,8 +1331,8 @@ update_local_clock(peer_t *p)
 	 * an old sample or the same sample twice.
 	 */
 	if (recv_time <= G.last_update_recv_time) {
-		VERB3 bb_error_msg("same or older datapoint: %f >= %f, not using it",
-				G.last_update_recv_time, recv_time);
+		VERB3 bb_error_msg("update from %s: same or older datapoint, not using it",
+			p->p_dotted);
 		return 0; /* "leave poll interval as is" */
 	}
 
@@ -1333,7 +1348,7 @@ update_local_clock(peer_t *p)
 	if (G.discipline_state == STATE_FREQ) {
 		/* Ignore updates until the stepout threshold */
 		if (since_last_update < WATCH_THRESHOLD) {
-			VERB3 bb_error_msg("measuring drift, datapoint ignored, %f sec remains",
+			VERB4 bb_error_msg("measuring drift, datapoint ignored, %f sec remains",
 					WATCH_THRESHOLD - since_last_update);
 			return 0; /* "leave poll interval as is" */
 		}
@@ -1347,10 +1362,21 @@ update_local_clock(peer_t *p)
 	 * offset exceeds the step threshold and when it does not.
 	 */
 	if (abs_offset > STEP_THRESHOLD) {
+#if 0
+		double remains;
+
+// This "spike state" seems to be useless, peer selection already drops
+// occassional "bad" datapoints. If we are here, there were _many_
+// large offsets. When a few first large offsets are seen,
+// we end up in "no valid datapoints, no peer selected" state.
+// Only when enough of them are seen (which means it's not a fluke),
+// we end up here. Looks like _our_ clock is off.
 		switch (G.discipline_state) {
 		case STATE_SYNC:
 			/* The first outlyer: ignore it, switch to SPIK state */
-			VERB3 bb_error_msg("offset:%+f - spike detected", offset);
+			VERB3 bb_error_msg("update from %s: offset:%+f, spike%s",
+				p->p_dotted, offset,
+				"");
 			G.discipline_state = STATE_SPIK;
 			return -1; /* "decrease poll interval" */
 
@@ -1358,13 +1384,16 @@ update_local_clock(peer_t *p)
 			/* Ignore succeeding outlyers until either an inlyer
 			 * is found or the stepout threshold is exceeded.
 			 */
-			if (since_last_update < WATCH_THRESHOLD) {
-				VERB3 bb_error_msg("spike detected, datapoint ignored, %f sec remains",
-						WATCH_THRESHOLD - since_last_update);
+			remains = WATCH_THRESHOLD - since_last_update;
+			if (remains > 0) {
+				VERB3 bb_error_msg("update from %s: offset:%+f, spike%s",
+					p->p_dotted, offset,
+					", datapoint ignored");
 				return -1; /* "decrease poll interval" */
 			}
 			/* fall through: we need to step */
 		} /* switch */
+#endif
 
 		/* Step the time and clamp down the poll interval.
 		 *
@@ -1387,7 +1416,7 @@ update_local_clock(peer_t *p)
 		 * is always suppressed, even at the longer poll
 		 * intervals.
 		 */
-		VERB3 bb_error_msg("stepping time by %+f; poll_exp=MINPOLL", offset);
+		VERB4 bb_error_msg("stepping time by %+f; poll_exp=MINPOLL", offset);
 		step_time(offset);
 		if (option_mask32 & OPT_q) {
 			/* We were only asked to set time once. Done. */
@@ -1412,7 +1441,7 @@ update_local_clock(peer_t *p)
 	} else { /* abs_offset <= STEP_THRESHOLD */
 
 		if (G.poll_exp < MINPOLL && G.initial_poll_complete) {
-			VERB3 bb_error_msg("small offset:%+f, disabling burst mode", offset);
+			VERB4 bb_error_msg("small offset:%+f, disabling burst mode", offset);
 			G.polladj_count = 0;
 			G.poll_exp = MINPOLL;
 		}
@@ -1441,7 +1470,7 @@ update_local_clock(peer_t *p)
 #else
 			set_new_values(STATE_SYNC, offset, recv_time);
 #endif
-			VERB3 bb_error_msg("transitioning to FREQ, datapoint ignored");
+			VERB4 bb_error_msg("transitioning to FREQ, datapoint ignored");
 			return 0; /* "leave poll interval as is" */
 
 #if 0 /* this is dead code for now */
@@ -1510,7 +1539,7 @@ update_local_clock(peer_t *p)
 	dtemp = p->filter_jitter; // SQRT(SQUARE(p->filter_jitter) + SQUARE(G.cluster_jitter));
 	dtemp += MAXD(p->filter_dispersion + FREQ_TOLERANCE * (G.cur_time - p->lastpkt_recv_time) + abs_offset, MINDISP);
 	G.rootdisp = p->lastpkt_rootdisp + dtemp;
-	VERB3 bb_error_msg("updating leap/refid/reftime/rootdisp from peer %s", p->p_dotted);
+	VERB4 bb_error_msg("updating leap/refid/reftime/rootdisp from peer %s", p->p_dotted);
 
 	/* We are in STATE_SYNC now, but did not do adjtimex yet.
 	 * (Any other state does not reach this, they all return earlier)
@@ -1530,13 +1559,13 @@ update_local_clock(peer_t *p)
 	dtemp = SQUARE(dtemp);
 	G.discipline_wander = SQRT(etemp + (dtemp - etemp) / AVG);
 
-	VERB3 bb_error_msg("discipline freq_drift=%.9f(int:%ld corr:%e) wander=%f",
+	VERB4 bb_error_msg("discipline freq_drift=%.9f(int:%ld corr:%e) wander=%f",
 			G.discipline_freq_drift,
 			(long)(G.discipline_freq_drift * 65536e6),
 			freq_drift,
 			G.discipline_wander);
 #endif
-	VERB3 {
+	VERB4 {
 		memset(&tmx, 0, sizeof(tmx));
 		if (adjtimex(&tmx) < 0)
 			bb_perror_msg_and_die("adjtimex");
@@ -1584,7 +1613,7 @@ update_local_clock(peer_t *p)
 	/* NB: here kernel returns constant == G.poll_exp, not == G.poll_exp - 4.
 	 * Not sure why. Perhaps it is normal.
 	 */
-	VERB3 bb_error_msg("adjtimex:%d freq:%ld offset:%+ld status:0x%x",
+	VERB4 bb_error_msg("adjtimex:%d freq:%ld offset:%+ld status:0x%x",
 				rc, tmx.freq, tmx.offset, tmx.status);
 	G.kernel_freq_drift = tmx.freq / 65536;
 	VERB2 bb_error_msg("update from:%s offset:%+f jitter:%f clock drift:%+.3fppm tc:%d",
@@ -1606,7 +1635,7 @@ retry_interval(void)
 	interval = RETRY_INTERVAL;
 	r = random();
 	interval += r % (unsigned)(RETRY_INTERVAL / 4);
-	VERB3 bb_error_msg("chose retry interval:%u", interval);
+	VERB4 bb_error_msg("chose retry interval:%u", interval);
 	return interval;
 }
 static unsigned
@@ -1619,7 +1648,7 @@ poll_interval(int exponent)
 	interval = 1 << exponent;
 	r = random();
 	interval += ((r & (interval-1)) >> 4) + ((r >> 8) & 1); /* + 1/16 of interval, max */
-	VERB3 bb_error_msg("chose poll interval:%u (poll_exp:%d exp:%d)", interval, G.poll_exp, exponent);
+	VERB4 bb_error_msg("chose poll interval:%u (poll_exp:%d exp:%d)", interval, G.poll_exp, exponent);
 	return interval;
 }
 static NOINLINE void
@@ -1713,7 +1742,7 @@ recv_and_process_peer_pkt(peer_t *p)
 	T4 = G.cur_time;
 
 	p->lastpkt_recv_time = T4;
-	VERB5 bb_error_msg("%s->lastpkt_recv_time=%f", p->p_dotted, p->lastpkt_recv_time);
+	VERB6 bb_error_msg("%s->lastpkt_recv_time=%f", p->p_dotted, p->lastpkt_recv_time);
 
 	/* The delay calculation is a special case. In cases where the
 	 * server and client clocks are running at different rates and
@@ -1776,7 +1805,7 @@ recv_and_process_peer_pkt(peer_t *p)
 			 * drop poll interval one step down.
 			 */
 			if (fabs(q->filter_offset) >= POLLDOWN_OFFSET) {
-				VERB3 bb_error_msg("offset:%+f > POLLDOWN_OFFSET", q->filter_offset);
+				VERB4 bb_error_msg("offset:%+f > POLLDOWN_OFFSET", q->filter_offset);
 				goto poll_down;
 			}
 		}
@@ -1798,11 +1827,11 @@ recv_and_process_peer_pkt(peer_t *p)
 				G.polladj_count = 0;
 				if (G.poll_exp < MAXPOLL) {
 					G.poll_exp++;
-					VERB3 bb_error_msg("polladj: discipline_jitter:%f ++poll_exp=%d",
+					VERB4 bb_error_msg("polladj: discipline_jitter:%f ++poll_exp=%d",
 							G.discipline_jitter, G.poll_exp);
 				}
 			} else {
-				VERB3 bb_error_msg("polladj: incr:%d", G.polladj_count);
+				VERB4 bb_error_msg("polladj: incr:%d", G.polladj_count);
 			}
 		} else {
 			G.polladj_count -= G.poll_exp * 2;
@@ -1824,11 +1853,11 @@ recv_and_process_peer_pkt(peer_t *p)
 						if (pp->p_fd < 0)
 							pp->next_action_time -= (1 << G.poll_exp);
 					}
-					VERB3 bb_error_msg("polladj: discipline_jitter:%f --poll_exp=%d",
+					VERB4 bb_error_msg("polladj: discipline_jitter:%f --poll_exp=%d",
 							G.discipline_jitter, G.poll_exp);
 				}
 			} else {
-				VERB3 bb_error_msg("polladj: decr:%d", G.polladj_count);
+				VERB4 bb_error_msg("polladj: decr:%d", G.polladj_count);
 			}
 		}
 	}
