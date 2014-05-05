@@ -41,6 +41,7 @@
 #include <setjmp.h>
 #include <fnmatch.h>
 #include <sys/times.h>
+#include <sys/utsname.h> /* for setting $HOSTNAME */
 
 #include "busybox.h" /* for applet_names */
 #include "unicode.h"
@@ -8960,6 +8961,9 @@ mklocal(char *name)
 			vp->flags |= VSTRFIXED|VTEXTFIXED;
 			if (eq)
 				setvareq(name, 0);
+			else
+				/* "local VAR" unsets VAR: */
+				setvar(name, NULL, 0);
 		}
 	}
 	lvp->vp = vp;
@@ -13014,7 +13018,12 @@ init(void)
 		setvar2("PPID", utoa(getppid()));
 #if ENABLE_ASH_BASH_COMPAT
 		p = lookupvar("SHLVL");
-		setvar2("SHLVL", utoa(p ? atoi(p) + 1 : 1));
+		setvar("SHLVL", utoa((p ? atoi(p) : 0) + 1), VEXPORT);
+		if (!lookupvar("HOSTNAME")) {
+			struct utsname uts;
+			uname(&uts);
+			setvar2("HOSTNAME", uts.nodename);
+		}
 #endif
 		p = lookupvar("PWD");
 		if (p) {

@@ -650,6 +650,8 @@ char *xstrndup(const char *s, int n) FAST_FUNC RETURNS_MALLOC;
 void overlapping_strcpy(char *dst, const char *src) FAST_FUNC;
 char *safe_strncpy(char *dst, const char *src, size_t size) FAST_FUNC;
 char *strncpy_IFNAMSIZ(char *dst, const char *src) FAST_FUNC;
+unsigned count_strstr(const char *str, const char *sub) FAST_FUNC;
+char *xmalloc_substitute_string(const char *src, int count, const char *sub, const char *repl) FAST_FUNC;
 /* Guaranteed to NOT be a macro (smallest code). Saves nearly 2k on uclibc.
  * But potentially slow, don't use in one-billion-times loops */
 int bb_putchar(int ch) FAST_FUNC;
@@ -736,12 +738,12 @@ extern void *xmalloc_xopen_read_close(const char *filename, size_t *maxsz_p) FAS
 
 #if SEAMLESS_COMPRESSION
 /* Autodetects gzip/bzip2 formats. fd may be in the middle of the file! */
-extern int setup_unzip_on_fd(int fd, int fail_if_not_detected) FAST_FUNC;
+extern int setup_unzip_on_fd(int fd, int fail_if_not_compressed) FAST_FUNC;
 /* Autodetects .gz etc */
-extern int open_zipped(const char *fname) FAST_FUNC;
+extern int open_zipped(const char *fname, int fail_if_not_compressed) FAST_FUNC;
 #else
 # define setup_unzip_on_fd(...) (0)
-# define open_zipped(fname)     open((fname), O_RDONLY);
+# define open_zipped(fname, fail_if_not_compressed)  open((fname), O_RDONLY);
 #endif
 extern void *xmalloc_open_zipped_read_close(const char *fname, size_t *maxsz_p) FAST_FUNC RETURNS_MALLOC;
 
@@ -910,9 +912,9 @@ void FAST_FUNC update_utmp(pid_t pid, int new_type, const char *tty_name, const 
 #endif
 
 
-int execable_file(const char *name) FAST_FUNC;
-char *find_execable(const char *filename, char **PATHp) FAST_FUNC;
-int exists_execable(const char *filename) FAST_FUNC;
+int file_is_executable(const char *name) FAST_FUNC;
+char *find_executable(const char *filename, char **PATHp) FAST_FUNC;
+int executable_exists(const char *filename) FAST_FUNC;
 
 /* BB_EXECxx always execs (it's not doing NOFORK/NOEXEC stuff),
  * but it may exec busybox and call applet instead of searching PATH.
@@ -1072,6 +1074,7 @@ enum {
 	LOGMODE_BOTH = LOGMODE_SYSLOG + LOGMODE_STDIO,
 };
 extern const char *msg_eol;
+extern smallint syslog_level;
 extern smallint logmode;
 extern int die_sleep;
 extern uint8_t xfunc_error_retval;
